@@ -1,51 +1,4 @@
-tebol'?'B-Outras':'Outras';
-     assign[comp]={cluster:other,source:'other',confidence:0,via:'Sem margens registadas',category:null,
-       Betano:null,Betclic:null,Bwin:null,mean:null,sd:null,range:null,structuralIndex:null};
-   }
- }
- return assign;
-}
-function qscore(c,invert=false){let tw=c.reduce((a,x)=>a+x[1],0)||1,s=c.reduce((a,x)=>a+x[1]*x[2].shrunk,0)/tw;if(invert)s=-s;const conf=c.reduce((a,x)=>a+x[1]*x[2].conf,0)/tw,raw=Math.max(0,Math.min(100,50+100*s)),q=50+(raw-50)*(.35+.65*conf);return{q:Math.max(0,Math.min(100,q)),signal:s,conf}}
-function evList(c){return c.map(([label,w,m])=>({label,roi:m.roi==null?null:m.roi*100,vol:m.vol,n:m.n,shrunk:m.shrunk*100,weight:w}))}
-function contrMode(s){s=txt(s).toUpperCase();if(/X2|1X/.test(s))return'DOUBLE';if(/\s[12]$/.test(s))return'OUTRIGHT';return'OTHER'}function oppositeLabel(r){return txt(r.Seleção)===txt(r['Equipa 1'])?txt(r['Equipa 2']):txt(r['Equipa 1'])}function doubleLabel(r){return txt(r.Seleção)===txt(r['Equipa 1'])?'X2':'1X'}function potentialROI(s,conf){return 100*s*(.72+.28*conf)}
-function heatMatrix(closed,rowKey,colKey){const rows=[...new Set(closed.map(rowKey).filter(Boolean))],cols=[...new Set(closed.map(colKey).filter(Boolean))],data={};for(const rk of rows){data[rk]={};for(const ck of cols)data[rk][ck]=perf(closed.filter(x=>rowKey(x)===rk&&colKey(x)===ck))}return{rows,cols,data}}
-
-function compPerfVector(comp,closed,levels){
- return levels.map(l=>{
-   const m=perf(closed.filter(x=>x.Comp_Full===comp&&txt(x.NIVEL)===l));
-   return (m.vol>=1.5&&m.roi!=null)?m.shrunk:null
- });
-}
-function behavioralDistance(compA,compB,closed,levels){
- const A=compPerfVector(compA,closed,levels),B=compPerfVector(compB,closed,levels);
- let s=0,n=0;
- for(let i=0;i<A.length;i++)if(A[i]!=null&&B[i]!=null){s+=(A[i]-B[i])*(A[i]-B[i]);n++}
- return n?Math.sqrt(s/n):1.5
-}
-function buildSequence(data,closed,assign){
- const levels=[...new Set(closed.map(x=>txt(x.NIVEL)).filter(Boolean))].sort();
- const comps=[...new Set(closed.map(x=>x.Comp_Full).filter(Boolean))];
- const byZone={};
- for(const comp of comps){
-   const r=closed.find(x=>x.Comp_Full===comp);
-   const zone=assign[txt(r?.Competição)]?.cluster||'Outras';
-   (byZone[zone]??=[]).push(comp)
- }
- const sequenceByZone={};
- for(const [zone,arr] of Object.entries(byZone)){
-   if(zone.includes('Outras')){
-     sequenceByZone[zone]=[...arr].sort((a,b)=>perf(closed.filter(x=>x.Comp_Full===b)).vol-perf(closed.filter(x=>x.Comp_Full===a)).vol);
-     continue;
-   }
-   if(arr.length<3){
-     sequenceByZone[zone]=[...arr].sort((a,b)=>perf(closed.filter(x=>x.Comp_Full===b)).vol-perf(closed.filter(x=>x.Comp_Full===a)).vol);
-     continue;
-   }
-   const vol=c=>perf(closed.filter(x=>x.Comp_Full===c)).vol;
-   const rem=[...arr].sort((a,b)=>vol(b)-vol(a)),ord=[rem.shift()];
-   while(rem.length){
-     const last=ord[ord.length-1];let bi=0,bd=Infinity;
-     rem.forEach((x,i)=>{const d=behavioralDistance(last,x,closed,levels);if(d<bd){bd=d;bi=i}});
+x,closed,levels);if(d<bd){bd=d;bi=i}});
      ord.push(rem.splice(bi,1)[0])
    }
    sequenceByZone[zone]=ord
@@ -87,7 +40,7 @@ function contrarianHits(r){
   if(!side||side==='DRAW'||missing(r.Resultado))return null;
 
   if(txt(r.Desporto)==='Ténis'){
-    const out=footballOutcome(r);
+    const out=footballOutcome(r); // set score 2-0/1-2 works as HOME/AWAY
     if(!out)return null;
     return {outright:out!==side?1:0,double:null};
   }
@@ -107,6 +60,7 @@ function probabilityMetric(rows,mode){
     const v=mode==='DOUBLE'?x.double:x.outright;
     if(v==null)continue;n++;h+=v;
   }
+  // Beta(1,1) shrinkage: evita probabilidades extremas com amostras pequenas.
   const p=(h+1)/(n+2);
   return {n,h,p,conf:Math.min(1,n/20)};
 }
@@ -132,8 +86,10 @@ function buildModel(){
   let nWeightSum=0,nSignal=0,nVol=0,nN=0;
   for(const x of neighborMetrics){const w=1/Math.pow(x.meta.distance,1.35);nWeightSum+=w;nSignal+=w*x.m.shrunk;nVol+=w*x.m.vol;nN+=x.m.n}
   const neighborMetric={n:nN,vol:nWeightSum?nVol/nWeightSum:0,pnl:0,roi:nWeightSum?nSignal/nWeightSum:null,shrunk:nWeightSum?nSignal/nWeightSum:0,conf:Math.min(1,(nWeightSum?nVol/nWeightSum:0)/10)};
-  const sparse=Math.max(0,1-Math.min(1,own.vol/10)),isOther=(a.source==='other'),neighborW=isOther?0:(.10+.26*sparse);
+
+  const isOther=(a.source==='other');
   const zoneMetric=isOther?perf([]):perf(closed.filter(x=>cid(x)===a.cluster&&txt(x.NIVEL)===level));
+
   const rowsOwn=closed.filter(x=>x.Comp_Full===comp&&txt(x.NIVEL)===level),
         rowsComp=closed.filter(x=>x.Comp_Full===comp),
         rowsNeigh=closed.filter(x=>neighborMetrics.some(n=>n.meta.comp===x.Comp_Full)&&txt(x.NIVEL)===level),
@@ -141,10 +97,89 @@ function buildModel(){
         rowsLevel=closed.filter(x=>txt(x.NIVEL)===level),
         rowsBand=closed.filter(x=>x.Comp_Full===comp&&x._band===band),
         rowsHouse=closed.filter(x=>txt(x.Casa_Entrada)===house&&txt(x.NIVEL)===level);
-  const follow=[['Competição + combinação',.38,own],['Competição global',.20,perf(rowsComp)],['Vizinhos da sequência',neighborW,neighborMetric],['Grupo estrutural + combinação',isOther?0:.08,zoneMetric],['Combinação global',.10,perf(rowsLevel)],['Competição + gama odd',.08,perf(rowsBand)],['Casa + combinação',.05,perf(rowsHouse)]];
+
+  // AUTONOMIA PELO N da própria célula Competição × Delta.
+  const ownN=Math.max(own.n||0,Math.round((own.vol||0)*2));
+
+  function autonomyFromN(n){
+    if(n>=30)return .94;
+    if(n>=20)return .86+(n-20)*.008;
+    if(n>=10)return .68+(n-10)*.018;
+    if(n>=5)return .48+(n-5)*.04;
+    return .28+n*.04;
+  }
+
+  const autonomy=autonomyFromN(ownN);
+  const maturity=autonomy;
+  const wOwn=autonomy;
+  const residual=1-wOwn;
+
+  // Um vizinho só é válido se tiver N próprio na MESMA combinação.
+  const qualifiedNeighbors=neighborMetrics.map(x=>{
+    const nn=Math.max(x.m.n||0,Math.round((x.m.vol||0)*2));
+    const nConf=nn>=20?1:nn>=12?.75:nn>=6?.45:nn>=3?.20:0;
+    return {...x,nN:nn,nConf};
+  }).filter(x=>x.nConf>0);
+
+  let qW=0,qSignal=0,qVol=0,qN=0;
+  for(const x of qualifiedNeighbors){
+    const distW=1/Math.pow(x.meta.distance,1.35);
+    const w=distW*x.nConf;
+    qW+=w;
+    qSignal+=w*x.m.shrunk;
+    qVol+=w*x.m.vol;
+    qN+=x.nN;
+  }
+
+  const qualifiedNeighborMetric={
+    n:qN,
+    vol:qW?qVol/qW:0,
+    pnl:0,
+    roi:qW?qSignal/qW:null,
+    shrunk:qW?qSignal/qW:0,
+    conf:Math.min(1,(qW?qVol/qW:0)/10)
+  };
+
+  const hasQualifiedNeighbors=qW>0 && !isOther;
+
+  // O residual só é usado para apoio. Quanto maior o N próprio, menor este residual.
+  let wNeigh=hasQualifiedNeighbors?residual*.42:0;
+  let wZone=!isOther?residual*.10:0;
+  let wComp=residual*.25;
+  let wLevel=residual*.10;
+  let wBand=residual*.08;
+  let wHouse=residual*.05;
+
+  // Redistribuir o que não pode ser usado em vizinhos/grupo.
+  let unused=residual-(wNeigh+wZone+wComp+wLevel+wBand+wHouse);
+  if(unused<0)unused=0;
+  wComp+=unused*.50;
+  wLevel+=unused*.30;
+  wBand+=unused*.20;
+
+  const rowsQualifiedNeigh=closed.filter(x=>
+    qualifiedNeighbors.some(n=>n.meta.comp===x.Comp_Full) &&
+    txt(x.NIVEL)===level
+  );
+
+  const follow=[
+    ['Competição + combinação',wOwn,own],
+    ['Competição global',wComp,perf(rowsComp)],
+    ['Vizinhos qualificados',wNeigh,qualifiedNeighborMetric],
+    ['Grupo estrutural + combinação',wZone,zoneMetric],
+    ['Combinação global',wLevel,perf(rowsLevel)],
+    ['Competição + gama odd',wBand,perf(rowsBand)],
+    ['Casa + combinação',wHouse,perf(rowsHouse)]
+  ];
+
   const probEvidence=[
-    {weight:.38,rows:rowsOwn},{weight:.20,rows:rowsComp},{weight:neighborW,rows:rowsNeigh},
-    {weight:isOther?0:.08,rows:rowsZone},{weight:.10,rows:rowsLevel},{weight:.08,rows:rowsBand},{weight:.05,rows:rowsHouse}
+    {weight:wOwn,rows:rowsOwn},
+    {weight:wComp,rows:rowsComp},
+    {weight:wNeigh,rows:rowsQualifiedNeigh},
+    {weight:wZone,rows:rowsZone},
+    {weight:wLevel,rows:rowsLevel},
+    {weight:wBand,rows:rowsBand},
+    {weight:wHouse,rows:rowsHouse}
   ];
   const fq=qscore(follow,false),anti=qscore(follow,true),
         isF=txt(r.Desporto)==='Futebol'&&txt(r.Mercado)==='1X2',
@@ -159,17 +194,35 @@ function buildModel(){
       const po=weightedContrarianProbability(probEvidence,'OUTRIGHT');
       const pd=weightedContrarianProbability(probEvidence,'DOUBLE');
       const oddO=r['cont 1ou2'],oddD=r['cont 1xoux2'];
-      opts.push({mode:'OUTRIGHT',label:'Vencedor contrário: '+oppositeLabel(r),odd:oddO,probability:po.p,sample:po.n,potential:(oddO!=null&&po.p!=null)?(po.p*oddO-1)*100:null});
-      opts.push({mode:'DOUBLE',label:'Dupla hipótese: '+doubleLabel(r),odd:oddD,probability:pd.p,sample:pd.n,potential:(oddD!=null&&pd.p!=null)?(pd.p*oddD-1)*100:null});
+      opts.push({
+        mode:'OUTRIGHT',label:'Vencedor contrário: '+oppositeLabel(r),odd:oddO,
+        probability:po.p,sample:po.n,
+        potential:(oddO!=null&&po.p!=null)?(po.p*oddO-1)*100:null
+      });
+      opts.push({
+        mode:'DOUBLE',label:'Dupla hipótese: '+doubleLabel(r),odd:oddD,
+        probability:pd.p,sample:pd.n,
+        potential:(oddD!=null&&pd.p!=null)?(pd.p*oddD-1)*100:null
+      });
     }else if(txt(r.Desporto)==='Ténis'){
       const po=weightedContrarianProbability(probEvidence,'OUTRIGHT'),odd=r.Odd_Contraria;
-      opts.push({mode:'OUTRIGHT',label:'Vencedor contrário: '+oppositeLabel(r),odd,probability:po.p,sample:po.n,potential:(odd!=null&&po.p!=null)?(po.p*odd-1)*100:null});
+      opts.push({
+        mode:'OUTRIGHT',label:'Vencedor contrário: '+oppositeLabel(r),odd,
+        probability:po.p,sample:po.n,
+        potential:(odd!=null&&po.p!=null)?(po.p*odd-1)*100:null
+      });
     }
   }
 
+  // Histórico contrarian real continua apenas como validação informativa.
   for(const o of opts){
-    const vm=perf(contrHist.filter(x=>x.Comp_Full===comp&&txt(x.NIVEL)===level&&contrMode(x.Casa_Contraria)===o.mode),'P&L Real','Stake Real',5);
-    o.validationVol=vm.vol;o.validationRoi=vm.roi==null?null:vm.roi*100;o.score=cq;
+    const vm=perf(
+      contrHist.filter(x=>x.Comp_Full===comp&&txt(x.NIVEL)===level&&contrMode(x.Casa_Contraria)===o.mode),
+      'P&L Real','Stake Real',5
+    );
+    o.validationVol=vm.vol;
+    o.validationRoi=vm.roi==null?null:vm.roi*100;
+    o.score=cq;
   }
 
   opts.sort((x,y)=>(y.potential??-999)-(x.potential??-999));
@@ -183,3 +236,83 @@ function buildModel(){
   else if(bestStrategy==='QUEDA'&&fq.q>=55)rec='QUEDA';
   else if(bestPotential>0)rec='OBSERVAR';
   else rec='PASSAR';
+
+  return {...r,
+    _fq:fq.q,_fconf:fq.conf,_cq:cq,_cconf:isDraw?null:anti.conf,
+    _roiFollow:roiF,_roiContr:roiC,_bestContr:best,_opts:opts,
+    _bestPotential:bestPotential,_bestStrategy:bestStrategy,_rec:rec,
+    _followEv:evList(follow),_cluster:a.cluster,_assignSource:a.source,
+    _assignConf:a.confidence,_assignVia:a.via,_ownVol:own.vol,
+    _peerVol:qualifiedNeighborMetric.vol,_clusterWeight:wNeigh,
+    _ownN:ownN,_maturity:maturity,_ownWeight:wOwn,_autonomy:autonomy,
+    _qualifiedNeighbors:qualifiedNeighbors.map(x=>({comp:x.meta.comp,distance:x.meta.distance,n:x.nN})),
+    _neighbors:qualifiedNeighbors.map(x=>x.meta),_isDraw:isDraw
+  };
+ });
+ decisions.sort((a,b)=>b._bestPotential-a._bestPotential);
+ const overall=perf(closed),hmG=heatMatrix(closed,r=>r.Comp_Full,r=>r._group),hmL=heatMatrix(closed,r=>r.Comp_Full,r=>txt(r.NIVEL));
+ return{data,profiles,clusters,assign,closed,open,decisions,hmG,hmL,contrHist,sequenceByZone,summary:{n:closed.length,vol:overall.vol,pnl:overall.pnl,roi:overall.roi?overall.roi*100:0,open:open.length,marginCats:Object.keys(profiles).length,estimated:Object.values(assign).filter(x=>x.source==='other').length},comp:[...new Set(closed.map(x=>x.Comp_Full))].map(k=>({key:k,...perf(closed.filter(x=>x.Comp_Full===k))})).sort((a,b)=>b.vol-a.vol)}
+}
+function load(){MODEL=buildModel();document.getElementById('metaR').textContent=`${MODEL.data.length} linhas · ${MODEL.open.length} abertas`;document.getElementById('metaM').textContent=`${MODEL.summary.marginCats} categorias · ${MODEL.clusters.length} clusters`;populate();renderAll()}
+function populate(){document.getElementById('dfComp').innerHTML='<option value="">Todas as competições</option>'+[...new Set(MODEL.open.map(x=>txt(x.Competição)).filter(Boolean))].sort().map(x=>`<option>${esc(x)}</option>`).join('');document.getElementById('sigComp').innerHTML=Object.keys(MODEL.profiles).sort().map(x=>`<option>${esc(x)}</option>`).join('');document.getElementById('reactGrupo').innerHTML=MODEL.clusters.map(c=>`<option value="${c.id}">${c.id} · ${c.sport} (${c.members.length})</option>`).join('');document.getElementById('reactLevel').innerHTML=[...new Set(MODEL.closed.map(x=>txt(x.NIVEL)).filter(Boolean))].sort().map(x=>`<option>${esc(x)}</option>`).join('')}
+function qcolor(q){return q>=60?'#38ca92':q>=50?'#f3c45f':'#ff7174'}function evidence(a){return a.map(e=>`<div class="ev">${esc(e.label)} · peso ${fmt(e.weight*100,0)}% · ROI ${e.roi==null?'—':pct(e.roi)} · vol ${fmt(e.vol,1)} · n=${e.n}<br>ROI ajustado ${pct(e.shrunk)}</div>`).join('')}
+function renderK(){const s=MODEL.summary,a=[['Histórico',s.n],['Volume',eur(s.vol)],['P/L',eur(s.pnl)],['ROI',pct(s.roi)],['Em aberto',s.open],['Em “Outras”',s.estimated]];document.getElementById('kpis').innerHTML=a.map(x=>`<div class="kpi"><div class="kv">${x[1]}</div><div class="kl">${x[0]}</div></div>`).join('')}
+
+function bankValues(){
+ const ids=['Betano','Betclic','Solverde','Bwin','ESC'],o={};
+ ids.forEach(k=>o[k]=Math.max(0,num(document.getElementById('bal'+k)?.value)||0));
+ o.total=ids.reduce((s,k)=>s+o[k],0);
+ o.baseUnit=Math.max(.5,num(document.getElementById('baseUnit')?.value)||2);
+ o.maxStakePct=Math.max(.1,num(document.getElementById('maxStakePct')?.value)||1.5);
+ o.maxEventPct=Math.max(.25,num(document.getElementById('maxEventPct')?.value)||2);
+ o.maxDailyPct=Math.max(.5,num(document.getElementById('maxDailyPct')?.value)||5);
+ return o
+}
+function normalizeHouse(h){
+ const n=norm(h);
+ if(n.includes('betano'))return'Betano';
+ if(n.includes('betclic'))return'Betclic';
+ if(n.includes('solverde'))return'Solverde';
+ if(n.includes('bwin'))return'Bwin';
+ if(n==='esc'||n.includes('esc online'))return'ESC';
+ return null
+}
+function decisionOdd(d,opt=null){
+ if(opt)return opt.odd??null;
+ if(d._bestStrategy==='CONTRARIAN')return d._bestContr?.odd??null;
+ return d.Odd_Entrada
+}
+function decisionScore(d){
+ return d._bestStrategy==='CONTRARIAN'?(d._cq??0):(d._fq??0)
+}
+function decisionConfidence(d){
+ return d._bestStrategy==='CONTRARIAN'?(d._cconf??d._fconf??.20):(d._fconf??.20)
+}
+function eventKey(d){
+ return [d.Dia,d.Desporto,d.Competição,d['Equipa 1'],d['Equipa 2']].map(txt).join('|')
+}
+function clamp(x,a,b){return Math.max(a,Math.min(b,x))}
+function riskSizing(d,b,opt=null){
+ const odd=decisionOdd(d,opt);
+ if(!odd||odd<=1||b.total<=0)return{pct:0,units:0,stake:0,reason:'sem odd/saldo'};
+
+ const score=decisionScore(d),conf=clamp(decisionConfidence(d),0,1);
+ if(score<45)return{pct:0,units:0,stake:0,odd,score,reason:'score < 45'};
+
+ const pMarket=1/odd;
+ let pModel=null,nEff=0;
+
+ if(d._bestStrategy==='CONTRARIAN' || opt){
+   const co=opt||d._bestContr;
+   pModel=co?.probability??null;
+   nEff=clamp((co?.sample||0)*.18,8,120);
+ }else{
+   const roi=(d._roiFollow??0)/100;
+   pModel=clamp((1+roi)/odd,0.001,.999);
+   nEff=clamp((d._ownVol||0)*1.4+(d._peerVol||0)*.35,8,80);
+ }
+
+ if(pModel==null||!Number.isFinite(pModel))return{pct:0,units:0,stake:0,odd,score,reason:'sem probabilidade'};
+
+ const scoreTrust=clamp((score-45)/35,0,1);
+ const trust=Math.s
