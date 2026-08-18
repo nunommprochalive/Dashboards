@@ -1,98 +1,250 @@
-  return {...r,
-    _fq:fq.q,_fconf:fq.conf,_cq:cq,_cconf:isDraw?null:anti.conf,
-    _roiFollow:roiF,_roiContr:roiC,_bestContr:best,_opts:opts,
-    _bestPotential:bestPotential,_bestStrategy:bestStrategy,_rec:rec,
-    _followEv:evList(follow),_cluster:a.cluster,_assignSource:a.source,
-    _assignConf:a.confidence,_assignVia:a.via,_ownVol:own.vol,
-    _peerVol:neighborMetric.vol,_clusterWeight:neighborW,
-    _neighbors:neighborMetrics.map(x=>x.meta),_isDraw:isDraw
-  };
- });
- decisions.sort((a,b)=>b._bestPotential-a._bestPotential);
- const overall=perf(closed),hmG=heatMatrix(closed,r=>r.Comp_Full,r=>r._group),hmL=heatMatrix(closed,r=>r.Comp_Full,r=>txt(r.NIVEL));
- return{data,profiles,clusters,assign,closed,open,decisions,hmG,hmL,contrHist,sequenceByZone,summary:{n:closed.length,vol:overall.vol,pnl:overall.pnl,roi:overall.roi?overall.roi*100:0,open:open.length,marginCats:Object.keys(profiles).length,estimated:Object.values(assign).filter(x=>x.source==='other').length},comp:[...new Set(closed.map(x=>x.Comp_Full))].map(k=>({key:k,...perf(closed.filter(x=>x.Comp_Full===k))})).sort((a,b)=>b.vol-a.vol)}
-}
-function load(){MODEL=buildModel();document.getElementById('metaR').textContent=`${MODEL.data.length} linhas · ${MODEL.open.length} abertas`;document.getElementById('metaM').textContent=`${MODEL.summary.marginCats} categorias · ${MODEL.clusters.length} clusters`;populate();renderAll()}
-function populate(){document.getElementById('dfComp').innerHTML='<option value="">Todas as competições</option>'+[...new Set(MODEL.open.map(x=>txt(x.Competição)).filter(Boolean))].sort().map(x=>`<option>${esc(x)}</option>`).join('');document.getElementById('sigComp').innerHTML=Object.keys(MODEL.profiles).sort().map(x=>`<option>${esc(x)}</option>`).join('');document.getElementById('reactGrupo').innerHTML=MODEL.clusters.map(c=>`<option value="${c.id}">${c.id} · ${c.sport} (${c.members.length})</option>`).join('');document.getElementById('reactLevel').innerHTML=[...new Set(MODEL.closed.map(x=>txt(x.NIVEL)).filter(Boolean))].sort().map(x=>`<option>${esc(x)}</option>`).join('')}
-function qcolor(q){return q>=60?'#38ca92':q>=50?'#f3c45f':'#ff7174'}function evidence(a){return a.map(e=>`<div class="ev">${esc(e.label)} · peso ${fmt(e.weight*100,0)}% · ROI ${e.roi==null?'—':pct(e.roi)} · vol ${fmt(e.vol,1)} · n=${e.n}<br>ROI ajustado ${pct(e.shrunk)}</div>`).join('')}
-function renderK(){const s=MODEL.summary,a=[['Histórico',s.n],['Volume',eur(s.vol)],['P/L',eur(s.pnl)],['ROI',pct(s.roi)],['Em aberto',s.open],['Em “Outras”',s.estimated]];document.getElementById('kpis').innerHTML=a.map(x=>`<div class="kpi"><div class="kv">${x[1]}</div><div class="kl">${x[0]}</div></div>`).join('')}
+qrt(clamp(conf,0,1)*scoreTrust);
+ const modelWeight=clamp(.10+.55*trust,.10,.65);
+ const pBlend=pMarket+modelWeight*(pModel-pMarket);
 
-function bankValues(){
- const ids=['Betano','Betclic','Solverde','Bwin','ESC'],o={};
- ids.forEach(k=>o[k]=Math.max(0,num(document.getElementById('bal'+k)?.value)||0));
- o.total=ids.reduce((s,k)=>s+o[k],0);
- o.maxStakePct=Math.max(.1,num(document.getElementById('maxStakePct')?.value)||1.5);
- o.maxDailyPct=Math.max(.5,num(document.getElementById('maxDailyPct')?.value)||5);
- return o
+ const se=Math.sqrt(Math.max(.000001,pBlend*(1-pBlend)/(nEff+20)));
+ const pLower=Math.max(0,pBlend-.84*se);
+ const edgeConservative=odd*pLower-1;
+
+ const visibleROI=(d._bestStrategy==='CONTRARIAN' || opt)
+   ?((opt||d._bestContr)?.potential??d._roiContr??0)
+   :(d._roiFollow??0);
+
+ // Pontuação contínua de qualidade: valor + confiança + robustez.
+ const roiScore=clamp(visibleROI/25,0,1.6);       // 25% ≈ referência forte
+ const scoreScore=clamp((score-45)/30,0,1.25);
+ const confScore=clamp(conf/.65,0,1.2);
+ const edgeScore=clamp((edgeConservative+0.02)/.12,0,1.4);
+
+ let quality=.38*roiScore+.27*scoreScore+.20*confScore+.15*edgeScore;
+
+ // Curva de risco da odd: deliberadamente assimétrica.
+ // Odds baixas/moderadas recebem um pequeno bónus de confiança quando o sinal é robusto;
+ // odds altas são penalizadas agressivamente para proteger a banca.
+ let oddFactor=1;
+ if(odd<1.60)oddFactor=1.12;
+ else if(odd<1.90)oddFactor=1.08;
+ else if(odd<2.20)oddFactor=1.02;
+ else if(odd<2.75)oddFactor=.92;
+ else if(odd<3.50)oddFactor=.76;
+ else if(odd<4.50)oddFactor=.58;
+ else if(odd<5.50)oddFactor=.42;
+ else if(odd<7.00)oddFactor=.28;
+ else oddFactor=.18;
+
+ quality*=oddFactor;
+
+ // Bónus adicional quando a célula própria está madura e a odd é relativamente baixa.
+ // Este é o mecanismo que permite aumentar confiança em casos tipo ATP+CCC com N forte.
+ const ownMaturity=d._maturity??0;
+ if(odd<=2.0 && ownMaturity>=.70 && score>=60 && visibleROI>=8){
+   quality*=1.18;
+ }
+ if(odd<=1.85 && ownMaturity>=.85 && score>=65 && visibleROI>=10){
+   quality*=1.12;
+ }
+
+ // Tradução para unidades discretas.
+ let units=0;
+ if(score>=50 && visibleROI>=4){
+   if(quality>=1.18)units=2.0;
+   else if(quality>=1.02)units=1.5;
+   else if(quality>=.86)units=1.25;
+   else if(quality>=.68)units=1.0;
+   else if(quality>=.50)units=.75;
+   else units=.5;
+ }
+
+ // Floors experimentais.
+ if(score>=50 && visibleROI>=10 && units<.5)units=.5;
+ if(score>=55 && visibleROI>=12 && odd<=2.2 && units<.75)units=.75;
+ if(score>=60 && visibleROI>=10 && odd<=1.90 && ownMaturity>=.70 && units<1.0)units=1.0;
+ if(score>=65 && visibleROI>=12 && odd<=1.85 && ownMaturity>=.85 && units<1.25)units=1.25;
+
+ // Caps específicos por odd — bem mais agressivos nas odds altas.
+ if(odd>=7.0)units=Math.min(units,.25);
+ else if(odd>=5.5)units=Math.min(units,.25);
+ else if(odd>=4.5)units=Math.min(units,.50);
+ else if(odd>=3.5)units=Math.min(units,.75);
+ else if(odd>=2.75)units=Math.min(units,1.0);
+ else if(odd>=2.20)units=Math.min(units,1.25);
+ else if(odd>=1.90)units=Math.min(units,1.50);
+ // abaixo de 1.90 pode chegar a 2u se qualidade e banca permitirem
+
+ // Piso explícito para células maduras + odd baixa/moderada.
+ // Ex.: ATP + CCC com N forte e odd ~1.75 deve, no mínimo, chegar a 1u.
+ let strongMatureFloor=0;
+ if(ownMaturity>=.70 && score>=60 && visibleROI>=8 && odd<=2.0) strongMatureFloor=1.0;
+ if(ownMaturity>=.85 && score>=65 && visibleROI>=12 && odd<=1.85) strongMatureFloor=1.25;
+ if(ownMaturity>=.90 && score>=70 && visibleROI>=18 && odd<=1.80) strongMatureFloor=1.50;
+ units=Math.max(units,strongMatureFloor);
+
+ let stake=units*b.baseUnit;
+
+ // Travão de banca por entrada:
+ // para entradas maduras/fortes, nunca corta abaixo de 1u salvo se isso
+ // representar mais de 3% da banca total.
+ const pctCap=b.total*b.maxStakePct/100;
+ const matureProtectedCap=(strongMatureFloor>0 && b.baseUnit/b.total<=.03)
+   ?Math.max(pctCap,strongMatureFloor*b.baseUnit)
+   :pctCap;
+ stake=Math.min(stake,matureProtectedCap);
+ units=b.baseUnit>0?stake/b.baseUnit:0;
+
+ return{
+   pct:b.total?100*stake/b.total:0,
+   units,stake,odd,score,conf,pMarket,pModel,pBlend,pLower,nEff,
+   edge:edgeConservative,visibleROI,quality,oddFactor,strongMatureFloor,
+   reason:units>0?(strongMatureFloor>0?'amostra madura + odd favorável':'stake por unidades'):'sem valor suficiente'
+ }
 }
-function normalizeHouse(h){
- const n=norm(h);
- if(n.includes('betano'))return'Betano';
- if(n.includes('betclic'))return'Betclic';
- if(n.includes('solverde'))return'Solverde';
- if(n.includes('bwin'))return'Bwin';
- if(n==='esc'||n.includes('esc online'))return'ESC';
- return null
-}
-function decisionOdd(d){
- if(d._bestStrategy==='CONTRARIAN')return d._bestContr?.odd??null;
- return d.Odd_Entrada
-}
-function decisionConfidence(d){
- return d._bestStrategy==='CONTRARIAN'?(d._cconf??d._fconf??.25):(d._fconf??.25)
-}
-function rawStakePct(d,b){
- if(b.total<=0||!['QUEDA','CONTRARIAN'].includes(d._rec)||d._bestPotential<=0)return 0;
- const roi=Math.min(20,Math.max(0,d._bestPotential));        // edge capped for sizing
- const edgeQ=Math.min(1,roi/12);
- const conf=Math.max(.15,Math.min(1,decisionConfidence(d)));
- const odd=decisionOdd(d)||2;
- // Proteção essencial contra inflação em odds altas:
- // até 3 sem penalização; acima disso a stake cai progressivamente.
- const oddPenalty=odd<=3?1:Math.max(.28,3/odd);
- const quality=edgeQ*conf*oddPenalty;
- return Math.min(b.maxStakePct,.20+1.30*quality)
+
+function contrarianExecutionStakes(d,b){
+ if(d._isDraw||!d._opts?.length)return[];
+ return d._opts.map(opt=>{
+   const risk=riskSizing(d,b,opt);
+   let stake=risk.stake||0;
+   const house=normalizeHouse(d.Casa_Contraria);
+
+   // Limite adicional por saldo da casa.
+   if(house&&b[house]>0){
+     const normalHouseCap=b[house]*.08;
+     const floorStake=(risk.strongMatureFloor||0)*b.baseUnit;
+     const protectedHouseCap=(floorStake>0 && floorStake/b[house]<=.10)?Math.max(normalHouseCap,floorStake):normalHouseCap;
+     stake=Math.min(stake,protectedHouseCap);
+   }
+
+   return{
+     opt,risk,stake,
+     units:b.baseUnit?stake/b.baseUnit:0,
+     pct:b.total?100*stake/b.total:0,
+     house
+   }
+ }).sort((a,b)=>{
+   // Recomendação principal = maior stake ajustada ao risco;
+   // em empate, desempata pela qualidade e depois pelo ROI.
+   return b.stake-a.stake ||
+          (b.risk?.quality||0)-(a.risk?.quality||0) ||
+          (b.opt?.potential??-999)-(a.opt?.potential??-999)
+ })
 }
 function stakePlan(ds){
  const b=bankValues();
  const raw=ds.map(d=>{
-   const pct=rawStakePct(d,b);
-   let stake=b.total*pct/100;
-   const house=d._bestStrategy==='QUEDA'?normalizeHouse(d.Casa_Entrada):null;
-   if(house&&b[house]>0)stake=Math.min(stake,b[house]*.10); // nunca >10% do saldo da casa
-   return{d,pct,stake,house}
+   const risk=riskSizing(d,b);
+   let pct=risk.pct||0,stake=risk.stake||0;
+   const house=d._bestStrategy==='QUEDA'
+      ?normalizeHouse(d.Casa_Entrada)
+      :normalizeHouse(d.Casa_Contraria);
+
+   // Nunca mais de 8% do saldo disponível numa única casa.
+   if(house&&b[house]>0){
+     const normalHouseCap=b[house]*.08;
+     const floorStake=(risk.strongMatureFloor||0)*b.baseUnit;
+     const protectedHouseCap=(floorStake>0 && floorStake/b[house]<=.10)?Math.max(normalHouseCap,floorStake):normalHouseCap;
+     stake=Math.min(stake,protectedHouseCap);
+   }
+
+   return{d,pct:b.total?100*stake/b.total:0,stake,units:b.baseUnit?stake/b.baseUnit:0,house,risk,event:eventKey(d)}
  });
+
+ // Limite agregado por jogo: importante para entradas correlacionadas.
+ const byEvent={};
+ raw.forEach(x=>(byEvent[x.event]??=[]).push(x));
+ const eventMax=b.total*b.maxEventPct/100;
+ for(const rows of Object.values(byEvent)){
+   const tot=rows.reduce((s,x)=>s+x.stake,0);
+   if(tot>eventMax&&tot>0){
+     const sc=eventMax/tot;
+     rows.forEach(x=>{x.stake*=sc;x.pct=b.total?100*x.stake/b.total:0;x.units=b.baseUnit?x.stake/b.baseUnit:0;x.eventScaled=true})
+   }
+ }
+
+ // Limite diário total.
  const maxDaily=b.total*b.maxDailyPct/100,total=raw.reduce((s,x)=>s+x.stake,0);
  const scale=total>maxDaily&&total>0?maxDaily/total:1;
- raw.forEach(x=>{x.stake*=scale;x.pct=b.total?100*x.stake/b.total:0});
+ raw.forEach(x=>{x.stake*=scale;x.pct=b.total?100*x.stake/b.total:0;x.units=b.baseUnit?x.stake/b.baseUnit:0});
  return{b,rows:raw,total:raw.reduce((s,x)=>s+x.stake,0),scale}
 }
 function bankChanged(){
  const b=bankValues();
- try{localStorage.setItem('apostas_bankroll',JSON.stringify(b))}catch(e){}
+ try{localStorage.setItem('apostas_bankroll_v2',JSON.stringify({...b,savedAt:new Date().toISOString()}))}catch(e){}
+ renderDecision();
+}
+function bankHistory(){
+ try{return JSON.parse(localStorage.getItem('apostas_bankroll_history_v2')||'[]')||[]}catch(e){return[]}
+}
+function saveBankSnapshot(){
+ const b=bankValues();
+ if(!b.total){alert('Introduz primeiro os saldos.');return}
+ const now=new Date(),day=now.toISOString().slice(0,10);
+ let hist=bankHistory();
+ const snap={...b,id:Date.now(),date:day,savedAt:now.toISOString()};
+ const idx=hist.findIndex(x=>x.date===day);
+ if(idx>=0)hist[idx]=snap;else hist.unshift(snap);
+ hist=hist.sort((a,b)=>String(b.savedAt).localeCompare(String(a.savedAt))).slice(0,60);
+ try{
+   localStorage.setItem('apostas_bankroll_history_v2',JSON.stringify(hist));
+   localStorage.setItem('apostas_bankroll_v2',JSON.stringify(snap))
+ }catch(e){}
+ populateBankHistory();
+ alert('Saldo do dia guardado.')
+}
+function populateBankHistory(){
+ const sel=document.getElementById('bankHistorySelect');if(!sel)return;
+ const cur=sel.value,hist=bankHistory();
+ sel.innerHTML='<option value="">— snapshots guardados —</option>'+hist.map(x=>{
+   const total=['Betano','Betclic','Solverde','Bwin','ESC'].reduce((s,h)=>s+(Number(x[h])||0),0);
+   return `<option value="${x.id}">${x.date} · ${eur(total)}</option>`
+ }).join('');
+ if([...sel.options].some(o=>o.value===cur))sel.value=cur
+}
+function applyBankValues(b){
+ for(const h of ['Betano','Betclic','Solverde','Bwin','ESC']){
+   const el=document.getElementById('bal'+h);if(el&&b[h]!=null)el.value=b[h]
+ }
+ if(b.baseUnit!=null&&document.getElementById('baseUnit'))document.getElementById('baseUnit').value=b.baseUnit;
+ if(b.maxStakePct!=null)document.getElementById('maxStakePct').value=b.maxStakePct;
+ if(b.maxEventPct!=null&&document.getElementById('maxEventPct'))document.getElementById('maxEventPct').value=b.maxEventPct;
+ if(b.maxDailyPct!=null)document.getElementById('maxDailyPct').value=b.maxDailyPct
+}
+function loadBankSnapshot(id){
+ if(!id)return;
+ const x=bankHistory().find(s=>String(s.id)===String(id));if(!x)return;
+ applyBankValues(x);
+ try{localStorage.setItem('apostas_bankroll_v2',JSON.stringify(x))}catch(e){}
  renderDecision()
+}
+function clearBankHistory(){
+ if(!confirm('Apagar o histórico de saldos guardado neste dispositivo?'))return;
+ try{localStorage.removeItem('apostas_bankroll_history_v2')}catch(e){}
+ populateBankHistory()
 }
 function restoreBank(){
  try{
-   const b=JSON.parse(localStorage.getItem('apostas_bankroll')||'{}');
-   ['Betano','Betclic','Solverde','Bwin','ESC'].forEach(k=>{const el=document.getElementById('bal'+k);if(el&&b[k]!=null)el.value=b[k]});
-   if(b.maxStakePct!=null)document.getElementById('maxStakePct').value=b.maxStakePct;
-   if(b.maxDailyPct!=null)document.getElementById('maxDailyPct').value=b.maxDailyPct;
+   const raw=localStorage.getItem('apostas_bankroll_v2')||localStorage.getItem('apostas_bankroll')||'{}';
+   applyBankValues(JSON.parse(raw))
  }catch(e){}
+ populateBankHistory()
 }
 function renderDecision(){
  const cf=document.getElementById('dfComp').value,rf=document.getElementById('dfRec').value,
- ds=MODEL.decisions.filter(d=>(!cf||txt(d.Competição)===cf)&&(!rf||d._rec===rf))
- .sort((a,b)=>b._bestPotential-a._bestPotential),
- plan=stakePlan(ds),stakeMap=new Map(plan.rows.map(x=>[x.d,x]));
+ allDs=[...MODEL.decisions],
+ plan=stakePlan(allDs),stakeMap=new Map(plan.rows.map(x=>[x.d,x])),
+ maxScore=d=>Math.max(d._fq??0,d._cq??0),
+ ds=allDs.filter(d=>(!cf||txt(d.Competição)===cf)&&(!rf||d._rec===rf))
+   .sort((a,b)=>{
+      const sa=stakeMap.get(a)?.stake||0,sb=stakeMap.get(b)?.stake||0;
+      return sb-sa || maxScore(b)-maxScore(a) || (b._bestPotential??-999)-(a._bestPotential??-999);
+   });
  if(document.getElementById('bankSummary')){
    document.getElementById('bankSummary').innerHTML=plan.b.total>0?
-     `Saldo total: <b>${eur(plan.b.total)}</b> · exposição sugerida desta lista: <b>${eur(plan.total)}</b> (${pct(plan.b.total?100*plan.total/plan.b.total:0)})${plan.scale<1?' · <span class="amber">reduzida pelo limite diário</span>':''}`:
+     `Saldo total: <b>${eur(plan.b.total)}</b> · exposição sugerida do painel completo: <b>${eur(plan.total)}</b> (${pct(plan.b.total?100*plan.total/plan.b.total:0)})${plan.scale<1?' · <span class="amber">reduzida pelo limite diário</span>':''}`:
      'Preenche os saldos para calcular as stakes sugeridas.';
  }
 
  document.getElementById('decisionNotice').innerHTML=
- `<div class="warn"><b>${MODEL.open.length}</b> entradas em aberto. O ranking usa o maior ROI potencial entre seguir a queda e inverter o histórico da queda. Quedas no Empate são avaliadas apenas como QUEDA.</div>`;
+ `<div class="warn"><b>${MODEL.open.length}</b> entradas em aberto. O ranking usa primeiro a stake sugerida e depois o maior score entre Queda e Contrarian. Quedas no Empate são avaliadas apenas como QUEDA.</div>`;
 
  document.getElementById('decisions').innerHTML=ds.map((d,i)=>{
    const sclass=d._assignSource==='real'?'real':'estimated',
@@ -118,8 +270,8 @@ function renderDecision(){
        <div class="teams">${esc(d['Equipa 1'])} — ${esc(d['Equipa 2'])}<span class="cluster">${esc(d._cluster||'?')}</span><span class="source ${sclass}">${src}</span></div>
        <div class="meta">${esc(d.Dia)} · ${esc(d.Competição)} · queda: <b>${esc(d.Seleção)}</b> · ${esc(d.NIVEL)} / ${esc(d._group)}</div>
        <div class="meta">Odds ${fmt(d.Betano,2)} / ${fmt(d.Betclic,2)} / ${fmt(d.Bwin,2)} · melhor ${esc(d.Casa_Entrada)} ${fmt(d.Odd_Entrada,2)}</div>
-       <div class="meta">Hist. próprio combinação ${fmt(d._ownVol,1)}u · vizinhos ${fmt(d._peerVol,1)}u · peso vizinhos ${fmt(d._clusterWeight*100,0)}%</div>
-       <div class="meta">Vizinhos: ${d._neighbors?.length?d._neighbors.map(n=>`${esc(n.comp)} (${n.distance})`).join(' · '):'—'}</div><details><summary>Ver evidência histórica usada para QUEDA e CONTRARIAN</summary><div class="evgrid">${evidence(d._followEv)}</div></details>
+       <div class="meta">Hist. próprio combinação ${fmt(d._ownVol,1)}u / N≈${d._ownN||0} · autonomia ${fmt((d._autonomy||0)*100,0)}% · peso próprio ${fmt((d._ownWeight||0)*100,0)}% · peso vizinhos ${fmt((d._clusterWeight||0)*100,0)}%</div>
+       <div class="meta">Vizinhos qualificados: ${d._qualifiedNeighbors?.length?d._qualifiedNeighbors.map(n=>`${esc(n.comp)} · N≈${n.n} · dist.${n.distance}`).join(' · '):'—'}</div><details><summary>Ver ponderação histórica usada para QUEDA e CONTRARIAN</summary><div class="evgrid">${evidence(d._followEv)}</div></details>
      </div>
      <div class="box ${d._bestStrategy==='QUEDA'?'best':''}">
        <div class="meta">Queda · score ${fmt(d._fq,0)}</div>
@@ -140,9 +292,13 @@ function renderDecision(){
        <div class="meta">melhor potencial</div>
        <div class="roi ${d._bestPotential>=0?'good':'bad'}">${pct(d._bestPotential)}</div>
        <div class="meta">${esc(d._bestStrategy)}</div>
-       ${(()=>{const sp=stakeMap.get(d);if(!sp||sp.stake<=0)return'<div class="meta">Stake sugerida: 0 €</div>';const h=sp.house?` · ${esc(sp.house)}`:'';return`<div style="margin-top:7px"><div class="meta">Stake sugerida${h}</div><div class="roi blue">${eur(sp.stake)}</div><div class="meta">${pct(sp.pct)} do saldo total</div></div>`})()}
-     </div>
-   </div>`;
- }).join('')||'<div class="mini">Sem entradas para este filtro.</div>';
-}
-function setHeat(x){heatType=x;document.getElementById('hg').classList.toggle('active',x==='group');document.getElementById('hl').classList.toggle('active',x==='level');renderHeat()}function setMetric(x){metric=x;['mr','mv','mp','mn'].forEach(id=>document.getElementById(id).classList.remove('active'));document.getElementByI
+       ${(()=>{
+ const sp=stakeMap.get(d);if(!sp)return'<div class="meta">Stake indisponível</div>';
+
+ if(d._bestStrategy==='CONTRARIAN'&&!d._isDraw&&d._opts?.length){
+   const xs=contrarianExecutionStakes(d,plan.b);
+   if(!xs.length)return'<div class="meta">Stake contrarian indisponível</div>';
+   return `<div style="margin-top:7px">
+     <div class="meta"><b>Stake por execução contrarian</b></div>
+     ${xs.map((x,j)=>{
+       const main=j===0?'<span class="pill">preferida pelo
