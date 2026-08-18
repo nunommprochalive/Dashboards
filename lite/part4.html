@@ -1,0 +1,148 @@
+  return {...r,
+    _fq:fq.q,_fconf:fq.conf,_cq:cq,_cconf:isDraw?null:anti.conf,
+    _roiFollow:roiF,_roiContr:roiC,_bestContr:best,_opts:opts,
+    _bestPotential:bestPotential,_bestStrategy:bestStrategy,_rec:rec,
+    _followEv:evList(follow),_cluster:a.cluster,_assignSource:a.source,
+    _assignConf:a.confidence,_assignVia:a.via,_ownVol:own.vol,
+    _peerVol:neighborMetric.vol,_clusterWeight:neighborW,
+    _neighbors:neighborMetrics.map(x=>x.meta),_isDraw:isDraw
+  };
+ });
+ decisions.sort((a,b)=>b._bestPotential-a._bestPotential);
+ const overall=perf(closed),hmG=heatMatrix(closed,r=>r.Comp_Full,r=>r._group),hmL=heatMatrix(closed,r=>r.Comp_Full,r=>txt(r.NIVEL));
+ return{data,profiles,clusters,assign,closed,open,decisions,hmG,hmL,contrHist,sequenceByZone,summary:{n:closed.length,vol:overall.vol,pnl:overall.pnl,roi:overall.roi?overall.roi*100:0,open:open.length,marginCats:Object.keys(profiles).length,estimated:Object.values(assign).filter(x=>x.source==='other').length},comp:[...new Set(closed.map(x=>x.Comp_Full))].map(k=>({key:k,...perf(closed.filter(x=>x.Comp_Full===k))})).sort((a,b)=>b.vol-a.vol)}
+}
+function load(){MODEL=buildModel();document.getElementById('metaR').textContent=`${MODEL.data.length} linhas · ${MODEL.open.length} abertas`;document.getElementById('metaM').textContent=`${MODEL.summary.marginCats} categorias · ${MODEL.clusters.length} clusters`;populate();renderAll()}
+function populate(){document.getElementById('dfComp').innerHTML='<option value="">Todas as competições</option>'+[...new Set(MODEL.open.map(x=>txt(x.Competição)).filter(Boolean))].sort().map(x=>`<option>${esc(x)}</option>`).join('');document.getElementById('sigComp').innerHTML=Object.keys(MODEL.profiles).sort().map(x=>`<option>${esc(x)}</option>`).join('');document.getElementById('reactGrupo').innerHTML=MODEL.clusters.map(c=>`<option value="${c.id}">${c.id} · ${c.sport} (${c.members.length})</option>`).join('');document.getElementById('reactLevel').innerHTML=[...new Set(MODEL.closed.map(x=>txt(x.NIVEL)).filter(Boolean))].sort().map(x=>`<option>${esc(x)}</option>`).join('')}
+function qcolor(q){return q>=60?'#38ca92':q>=50?'#f3c45f':'#ff7174'}function evidence(a){return a.map(e=>`<div class="ev">${esc(e.label)} · peso ${fmt(e.weight*100,0)}% · ROI ${e.roi==null?'—':pct(e.roi)} · vol ${fmt(e.vol,1)} · n=${e.n}<br>ROI ajustado ${pct(e.shrunk)}</div>`).join('')}
+function renderK(){const s=MODEL.summary,a=[['Histórico',s.n],['Volume',eur(s.vol)],['P/L',eur(s.pnl)],['ROI',pct(s.roi)],['Em aberto',s.open],['Em “Outras”',s.estimated]];document.getElementById('kpis').innerHTML=a.map(x=>`<div class="kpi"><div class="kv">${x[1]}</div><div class="kl">${x[0]}</div></div>`).join('')}
+
+function bankValues(){
+ const ids=['Betano','Betclic','Solverde','Bwin','ESC'],o={};
+ ids.forEach(k=>o[k]=Math.max(0,num(document.getElementById('bal'+k)?.value)||0));
+ o.total=ids.reduce((s,k)=>s+o[k],0);
+ o.maxStakePct=Math.max(.1,num(document.getElementById('maxStakePct')?.value)||1.5);
+ o.maxDailyPct=Math.max(.5,num(document.getElementById('maxDailyPct')?.value)||5);
+ return o
+}
+function normalizeHouse(h){
+ const n=norm(h);
+ if(n.includes('betano'))return'Betano';
+ if(n.includes('betclic'))return'Betclic';
+ if(n.includes('solverde'))return'Solverde';
+ if(n.includes('bwin'))return'Bwin';
+ if(n==='esc'||n.includes('esc online'))return'ESC';
+ return null
+}
+function decisionOdd(d){
+ if(d._bestStrategy==='CONTRARIAN')return d._bestContr?.odd??null;
+ return d.Odd_Entrada
+}
+function decisionConfidence(d){
+ return d._bestStrategy==='CONTRARIAN'?(d._cconf??d._fconf??.25):(d._fconf??.25)
+}
+function rawStakePct(d,b){
+ if(b.total<=0||!['QUEDA','CONTRARIAN'].includes(d._rec)||d._bestPotential<=0)return 0;
+ const roi=Math.min(20,Math.max(0,d._bestPotential));        // edge capped for sizing
+ const edgeQ=Math.min(1,roi/12);
+ const conf=Math.max(.15,Math.min(1,decisionConfidence(d)));
+ const odd=decisionOdd(d)||2;
+ // Proteção essencial contra inflação em odds altas:
+ // até 3 sem penalização; acima disso a stake cai progressivamente.
+ const oddPenalty=odd<=3?1:Math.max(.28,3/odd);
+ const quality=edgeQ*conf*oddPenalty;
+ return Math.min(b.maxStakePct,.20+1.30*quality)
+}
+function stakePlan(ds){
+ const b=bankValues();
+ const raw=ds.map(d=>{
+   const pct=rawStakePct(d,b);
+   let stake=b.total*pct/100;
+   const house=d._bestStrategy==='QUEDA'?normalizeHouse(d.Casa_Entrada):null;
+   if(house&&b[house]>0)stake=Math.min(stake,b[house]*.10); // nunca >10% do saldo da casa
+   return{d,pct,stake,house}
+ });
+ const maxDaily=b.total*b.maxDailyPct/100,total=raw.reduce((s,x)=>s+x.stake,0);
+ const scale=total>maxDaily&&total>0?maxDaily/total:1;
+ raw.forEach(x=>{x.stake*=scale;x.pct=b.total?100*x.stake/b.total:0});
+ return{b,rows:raw,total:raw.reduce((s,x)=>s+x.stake,0),scale}
+}
+function bankChanged(){
+ const b=bankValues();
+ try{localStorage.setItem('apostas_bankroll',JSON.stringify(b))}catch(e){}
+ renderDecision()
+}
+function restoreBank(){
+ try{
+   const b=JSON.parse(localStorage.getItem('apostas_bankroll')||'{}');
+   ['Betano','Betclic','Solverde','Bwin','ESC'].forEach(k=>{const el=document.getElementById('bal'+k);if(el&&b[k]!=null)el.value=b[k]});
+   if(b.maxStakePct!=null)document.getElementById('maxStakePct').value=b.maxStakePct;
+   if(b.maxDailyPct!=null)document.getElementById('maxDailyPct').value=b.maxDailyPct;
+ }catch(e){}
+}
+function renderDecision(){
+ const cf=document.getElementById('dfComp').value,rf=document.getElementById('dfRec').value,
+ ds=MODEL.decisions.filter(d=>(!cf||txt(d.Competição)===cf)&&(!rf||d._rec===rf))
+ .sort((a,b)=>b._bestPotential-a._bestPotential),
+ plan=stakePlan(ds),stakeMap=new Map(plan.rows.map(x=>[x.d,x]));
+ if(document.getElementById('bankSummary')){
+   document.getElementById('bankSummary').innerHTML=plan.b.total>0?
+     `Saldo total: <b>${eur(plan.b.total)}</b> · exposição sugerida desta lista: <b>${eur(plan.total)}</b> (${pct(plan.b.total?100*plan.total/plan.b.total:0)})${plan.scale<1?' · <span class="amber">reduzida pelo limite diário</span>':''}`:
+     'Preenche os saldos para calcular as stakes sugeridas.';
+ }
+
+ document.getElementById('decisionNotice').innerHTML=
+ `<div class="warn"><b>${MODEL.open.length}</b> entradas em aberto. O ranking usa o maior ROI potencial entre seguir a queda e inverter o histórico da queda. Quedas no Empate são avaliadas apenas como QUEDA.</div>`;
+
+ document.getElementById('decisions').innerHTML=ds.map((d,i)=>{
+   const sclass=d._assignSource==='real'?'real':'estimated',
+         src=d._assignSource==='real'?'margem real':'Outras';
+
+   let contr='Sem contrarian — queda no Empate';
+   if(!d._isDraw){
+     const modes=d._opts.map(o=>{
+       const odd=o.odd!=null?` @ ${fmt(o.odd,2)}`:' · odd por confirmar';
+       const pot=o.potential!=null?` · <b class="${o.potential>=0?'good':'bad'}">ROI pot. ${pct(o.potential)}</b>`:' · ROI pot. aguarda odd';
+       const prob=o.probability!=null?` · p.hist ${pct(o.probability*100)} (n≈${o.sample})`:'';
+       const validation=o.validationVol?
+         ` · validação real: ${fmt(o.validationVol,1)}u / ${o.validationRoi==null?'—':pct(o.validationRoi)}`:
+         '';
+       return `<div style="margin-top:5px"><b>${esc(o.label)}</b>${odd}${pot}${prob}${validation}</div>`;
+     }).join('');
+     contr=`<div><b>Sinal base contra a queda</b> · score ${fmt(d._cq,0)} · ROI pot. <span class="${(d._roiContr||0)>=0?'good':'bad'}">${pct(d._roiContr)}</span>${modes}</div>`;
+   }
+
+   return `<div class="decision">
+     <div class="rank">#${i+1}</div>
+     <div>
+       <div class="teams">${esc(d['Equipa 1'])} — ${esc(d['Equipa 2'])}<span class="cluster">${esc(d._cluster||'?')}</span><span class="source ${sclass}">${src}</span></div>
+       <div class="meta">${esc(d.Dia)} · ${esc(d.Competição)} · queda: <b>${esc(d.Seleção)}</b> · ${esc(d.NIVEL)} / ${esc(d._group)}</div>
+       <div class="meta">Odds ${fmt(d.Betano,2)} / ${fmt(d.Betclic,2)} / ${fmt(d.Bwin,2)} · melhor ${esc(d.Casa_Entrada)} ${fmt(d.Odd_Entrada,2)}</div>
+       <div class="meta">Hist. próprio combinação ${fmt(d._ownVol,1)}u · vizinhos ${fmt(d._peerVol,1)}u · peso vizinhos ${fmt(d._clusterWeight*100,0)}%</div>
+       <div class="meta">Vizinhos: ${d._neighbors?.length?d._neighbors.map(n=>`${esc(n.comp)} (${n.distance})`).join(' · '):'—'}</div><details><summary>Ver evidência histórica usada para QUEDA e CONTRARIAN</summary><div class="evgrid">${evidence(d._followEv)}</div></details>
+     </div>
+     <div class="box ${d._bestStrategy==='QUEDA'?'best':''}">
+       <div class="meta">Queda · score ${fmt(d._fq,0)}</div>
+       <div class="roi ${d._roiFollow>=0?'good':'bad'}">${pct(d._roiFollow)}</div>
+       <div class="meta">ROI potencial</div>
+     </div>
+     <div class="box ${d._bestStrategy==='CONTRARIAN'?'best':''}">
+       <div class="meta">${d._isDraw?'Contrarian não aplicável':'Contrarian · score '+fmt(d._cq,0)}</div>
+       <div class="roi ${d._roiContr==null?'':(d._roiContr>=0?'good':'bad')}">${d._roiContr==null?'—':pct(d._roiContr)}</div>
+       <div class="meta">${d._isDraw?'queda no Empate':'melhor ROI entre as execuções contrarian'}</div>
+     </div>
+     <div class="box">
+       <div class="meta">Execução contrarian</div>
+       <div class="meta" style="font-size:11px;color:var(--t)">${contr}</div>
+     </div>
+     <div class="rec">
+       <span class="badge ${d._rec}">${esc(d._rec)}</span>
+       <div class="meta">melhor potencial</div>
+       <div class="roi ${d._bestPotential>=0?'good':'bad'}">${pct(d._bestPotential)}</div>
+       <div class="meta">${esc(d._bestStrategy)}</div>
+       ${(()=>{const sp=stakeMap.get(d);if(!sp||sp.stake<=0)return'<div class="meta">Stake sugerida: 0 €</div>';const h=sp.house?` · ${esc(sp.house)}`:'';return`<div style="margin-top:7px"><div class="meta">Stake sugerida${h}</div><div class="roi blue">${eur(sp.stake)}</div><div class="meta">${pct(sp.pct)} do saldo total</div></div>`})()}
+     </div>
+   </div>`;
+ }).join('')||'<div class="mini">Sem entradas para este filtro.</div>';
+}
+function setHeat(x){heatType=x;document.getElementById('hg').classList.toggle('active',x==='group');document.getElementById('hl').classList.toggle('active',x==='level');renderHeat()}function setMetric(x){metric=x;['mr','mv','mp','mn'].forEach(id=>document.getElementById(id).classList.remove('active'));document.getElementByI
