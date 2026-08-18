@@ -2,7 +2,7 @@
 <html lang="pt">
 <head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Dashboard Apostas v7.4 — Decisão & Gestão de Stake</title>
+<title>Dashboard Apostas v8.8 — Heat Maps com Escala de N Adaptativa</title>
 <style>
 :root{--bg:#07101d;--p:#101a2b;--p2:#142239;--line:#293c5b;--t:#eef3fb;--m:#94a8c2;--g:#38ca92;--r:#ff7174;--a:#f3c45f;--b:#72afff;--v:#b69dff}
 *{box-sizing:border-box}body{margin:0;background:linear-gradient(180deg,#07101d,#091321);color:var(--t);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
@@ -19,9 +19,9 @@ details{margin-top:6px}summary{font-size:10.5px;color:#b9c8da;cursor:pointer}.ev
 .good{color:var(--g)}.bad{color:var(--r)}.amber{color:var(--a)}.blue{color:var(--b)}.vio{color:var(--v)}.small{font-size:10px;color:var(--m)}.simrow{display:flex;justify-content:space-between;gap:10px;padding:6px 0;border-bottom:1px solid #1d2d46;font-size:10.5px}.siggrid{display:grid;grid-template-columns:repeat(4,1fr);gap:7px}.sig{background:#0b1625;border:1px solid #20324d;border-radius:8px;padding:8px}.sig b{display:block;font-size:14px;margin-top:3px}
 .grpHead td{background:#172943!important;color:#d4dded;font-weight:800;text-align:left!important}.pill{display:inline-block;padding:3px 6px;border-radius:999px;background:#172943;color:#bfd1e8;font-size:9.5px}.best{outline:1px solid rgba(56,202,146,.45);background:#0d1d27}
 @media(max-width:1100px){.kpis{grid-template-columns:repeat(3,1fr)}.loadgrid,.twocol{grid-template-columns:1fr}.decision{grid-template-columns:34px 1fr}.decision>.box,.decision>.rec{grid-column:2}.siggrid{grid-template-columns:repeat(2,1fr)}}
-</style></head>
+#heat td:not(.comp){min-width:56px;text-align:center}#heat th{white-space:nowrap;vertical-align:bottom}</style></head>
 <body>
-<header><h1>Dashboard de Apostas v7.4 — Decisão & Gestão de Stake</h1>
+<header><h1>Dashboard de Apostas v8.8 — Decisão, Heat Maps & Stake</h1>
 <div class="sub">A estrutura usa agora <b>4 grupos definidos por regras simples</b>. <b>G1 — Mercado eficiente:</b> Betano &lt; 9,5%, Betclic &lt; 9,5% e Bwin &lt; 13,5%. <b>G2 — Mercado menos eficiente:</b> Betano ≥ 9,5% ou Betclic ≥ 9,5%, sem cumprir G4. <b>G3 — Bwin alta / assimétrico:</b> Betano &lt; 9,5%, Betclic &lt; 9,5% e Bwin ≥ 13,5%. <b>G4 — Mercado muito disperso:</b> Bwin ≥ 15% e Betano ≥ 9,5% ou Betclic ≥ 9,5%. A dispersão influencia sobretudo a combinação de deltas; o nível mínimo das margens é tratado como indicador de eficiência potencial do mercado. Dentro de cada grupo, mantém-se a <b>sequência contínua pela resposta ROI × deltas</b>, para procurar zonas de transição. Competições sem margens ficam em <b>Outras</b>.</div></header>
 <main>
 
@@ -33,7 +33,7 @@ details{margin-top:6px}summary{font-size:10.5px;color:#b9c8da;cursor:pointer}.ev
 <div class="kpis" id="kpis"></div>
 
 <section class="card"><h2>💰 Saldos & gestão de stake</h2>
-<div class="note"><b>Stake sugerida:</b> usa saldo total, qualidade do sinal, confiança histórica e uma penalização crescente para odds altas. É deliberadamente conservadora: odds contrarian muito elevadas não aumentam automaticamente a stake. OBSERVAR/PASSAR recebem stake 0 €.</div>
+<div class="note"><b>Stake sugerida — unidades e maturidade:</b> usa <b>2 € = 1u</b>. Quando a célula Competição × Delta já é madura e a odd é baixa/moderada, <b>1u passa a ser o piso de uma entrada forte</b>, podendo subir para 1,25u–2u. A banca continua a limitar risco extremo, mas deixa de cortar automaticamente uma boa entrada abaixo da unidade-base. Os cartões são ordenados por <b>stake sugerida</b> e, em empate, pelo maior score entre Queda e Contrarian.</div>
 <div class="toolbar" id="bankrollInputs">
 <label class="small">Betano <input id="balBetano" type="number" min="0" step="0.01" style="width:95px" oninput="bankChanged()"></label>
 <label class="small">Betclic <input id="balBetclic" type="number" min="0" step="0.01" style="width:95px" oninput="bankChanged()"></label>
@@ -41,7 +41,17 @@ details{margin-top:6px}summary{font-size:10.5px;color:#b9c8da;cursor:pointer}.ev
 <label class="small">Bwin <input id="balBwin" type="number" min="0" step="0.01" style="width:95px" oninput="bankChanged()"></label>
 <label class="small">ESC <input id="balESC" type="number" min="0" step="0.01" style="width:95px" oninput="bankChanged()"></label>
 <label class="small">Máx./entrada <input id="maxStakePct" type="number" min="0.1" max="5" step="0.1" value="1.5" style="width:70px" oninput="bankChanged()">%</label>
+<label class="small">Máx./jogo <input id="maxEventPct" type="number" min="0.25" max="5" step="0.25" value="2" style="width:70px" oninput="bankChanged()">%</label>
 <label class="small">Exposição diária <input id="maxDailyPct" type="number" min="0.5" max="20" step="0.5" value="5" style="width:70px" oninput="bankChanged()">%</label>
+</div>
+<div class="toolbar" style="margin-top:8px">
+<button type="button" onclick="saveBankSnapshot()">Guardar saldo do dia</button>
+<label class="small">Histórico
+<select id="bankHistorySelect" onchange="loadBankSnapshot(this.value)" style="min-width:210px">
+<option value="">— snapshots guardados —</option>
+</select></label>
+<button type="button" onclick="clearBankHistory()">Limpar histórico</button>
+<span class="mini">O último saldo fica guardado automaticamente neste navegador/dispositivo. No GitHub Pages, mantendo o mesmo URL, permanece entre atualizações do dashboard.</span>
 </div>
 <div id="bankSummary" class="mini"></div>
 </section>
@@ -51,16 +61,33 @@ details{margin-top:6px}summary{font-size:10.5px;color:#b9c8da;cursor:pointer}.ev
 <div class="toolbar"><select id="dfComp" onchange="renderDecision()"><option value="">Todas as competições</option></select><select id="dfRec" onchange="renderDecision()"><option value="">Todas</option><option>QUEDA</option><option>CONTRARIAN</option><option>OBSERVAR</option><option>PASSAR</option></select></div>
 <div id="decisionNotice"></div><div id="decisions"></div></section>
 
-<section class="card"><h2>Heat map — sequência contínua dentro dos 4 grupos</h2>
+<section class="card"><h2>Heat map — sequência manual por clusters</h2>
 <div class="toolbar"><button id="hg" class="active" onclick="setHeat('group')">Classes agrupadas</button><button id="hl" onclick="setHeat('level')">AAA…CCC</button><button id="mr" class="active" onclick="setMetric('roi')">ROI</button><button id="mv" onclick="setMetric('volume')">Volume</button><button id="mp" onclick="setMetric('pnl')">P&amp;L</button><button id="mn" onclick="setMetric('n')">N</button></div>
 <div class="small">As competições com margens reais e as estimadas aparecem no mesmo cluster. As estimadas são assinaladas. Dentro do cluster, o heat map mostra a reação específica de cada competição às combinações de delta.</div>
 <div class="tablewrap"><table class="heat" id="heat"></table></div></section>
 
 <section class="twocol">
 <div class="card"><h2>Estrutura de margens por competição — G1 → G2 → G3 → G4</h2><div class="toolbar"><select id="assignSport" onchange="renderAssignments()"><option value="">Todos</option><option>Futebol</option><option>Ténis</option><option>Basquetebol</option></select></div><div class="tablewrap"><table id="assignTable"></table></div></div>
-<div class="card"><h2>4 grupos estruturais de margem</h2><div id="clusters"></div></div>
+<div class="card"><h2>Mapa manual de clusters de margem</h2><div id="clusters"></div></div>
 </section>
 
 <section class="twocol">
 <div class="card"><h2>Assinatura completa das margens</h2><div class="toolbar"><select id="sigComp" onchange="renderSignature()"></select></div><div id="signature"></div><div id="neighbors"></div></div>
-<div class="card"><h2>Reação dos vizi
+<div class="card"><h2>Reação dos vizinhos à combinação</h2><div class="toolbar"><select id="reactGrupo" onchange="renderReaction()"></select><select id="reactLevel" onchange="renderReaction()"></select></div><div class="tablewrap"><table id="reaction"></table></div></div>
+</section>
+
+<section class="twocol"><div class="card"><h2>Desempenho por competição</h2><div class="tablewrap"><table id="compTable"></table></div></div><div class="card"><h2>Entradas em aberto</h2><div class="tablewrap"><table id="openTable"></table></div></div></section>
+
+<section class="card"><h2>Histórico pesquisável</h2><div class="toolbar"><input id="hq" style="min-width:320px" placeholder="Competição, equipa, seleção, nível…" oninput="renderHistory()"><select id="hs" onchange="renderHistory()"><option value="">Todas</option><option value="open">Em aberto</option><option value="closed">Terminadas</option></select></div><div class="tablewrap"><table id="hist"></table></div></section>
+
+</main>
+<script>
+const EMB_R="",EMB_M="";let RESCSV=EMB_R,MARGCSV=EMB_M,MODEL=null,heatType='group',metric='roi';
+function parseCSV(text){const rows=[];let row=[],f='',q=false;text=text.replace(/^\uFEFF/,'');for(let i=0;i<text.length;i++){const c=text[i];if(q){if(c==='"'&&text[i+1]==='"'){f+='"';i++}else if(c==='"')q=false;else f+=c}else{if(c==='"')q=true;else if(c===','){row.push(f);f=''}else if(c==='\n'){row.push(f.replace(/\r$/,''));rows.push(row);row=[];f=''}else f+=c}}if(f.length||row.length){row.push(f.replace(/\r$/,''));rows.push(row)}return rows}
+const txt=v=>v==null?'':String(v).trim();function missing(v){const s=txt(v).toLowerCase();return s===''||s==='-'||s==='—'||s==='–'||s==='nan'||s==='null'||s==='undefined'}
+function num(v){if(missing(v))return null;let s=txt(v).replace('%','').replace(/\s/g,'');if(s.includes(',')&&!s.includes('.'))s=s.replace(',','.');const n=Number(s);return Number.isFinite(n)?n:null}
+const esc=s=>String(s??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));const fmt=(n,d=1)=>n==null||!Number.isFinite(Number(n))?'—':Number(n).toFixed(d),pct=n=>n==null?'—':fmt(n,1)+'%',eur=n=>n==null?'—':fmt(n,2)+' €';
+function dateVal(s){if(!s)return 0;if(/^\d{4}-\d{2}-\d{2}$/.test(s))return Date.parse(s);const m=s.match(/^(\d{1,2})-(\d{1,2})(?:-(\d{4}))?$/);if(m)return Date.parse(`${m[3]||2026}-${m[2].padStart(2,'0')}-${m[1].padStart(2,'0')}`);return Date.parse(s)||0}
+function norm(s){return txt(s).normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().replace(/[^a-z0-9]+/g,' ').trim()}
+function oddBand(v){if(v==null)return'Sem odd';if(v<1.5)return'1.00–1.49';if(v<2)return'1.50–1.99';if(v<3)return'2.00–2.99';if(v<4)return'3.00–3.99';return'4.00+'}
+function classGroup(r){if(!missing(r.Classe))return txt(r.Classe);const n=txt(r.NIVEL),G={'Compressão':['AAA','AAB','ABA','BAA','AAC','ACA','CAA'],'Consenso':['BBB','BBA','BAB','ABB','BBC','BCB','CBB'],'Di
