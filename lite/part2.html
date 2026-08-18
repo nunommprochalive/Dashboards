@@ -1,0 +1,112 @@
+nhos à combinação</h2><div class="toolbar"><select id="reactGrupo" onchange="renderReaction()"></select><select id="reactLevel" onchange="renderReaction()"></select></div><div class="tablewrap"><table id="reaction"></table></div></div>
+</section>
+
+<section class="twocol"><div class="card"><h2>Desempenho por competição</h2><div class="tablewrap"><table id="compTable"></table></div></div><div class="card"><h2>Entradas em aberto</h2><div class="tablewrap"><table id="openTable"></table></div></div></section>
+
+<section class="card"><h2>Histórico pesquisável</h2><div class="toolbar"><input id="hq" style="min-width:320px" placeholder="Competição, equipa, seleção, nível…" oninput="renderHistory()"><select id="hs" onchange="renderHistory()"><option value="">Todas</option><option value="open">Em aberto</option><option value="closed">Terminadas</option></select></div><div class="tablewrap"><table id="hist"></table></div></section>
+
+</main>
+<script>
+const EMB_R="",EMB_M="";let RESCSV=EMB_R,MARGCSV=EMB_M,MODEL=null,heatType='group',metric='roi';
+function parseCSV(text){const rows=[];let row=[],f='',q=false;text=text.replace(/^\uFEFF/,'');for(let i=0;i<text.length;i++){const c=text[i];if(q){if(c==='"'&&text[i+1]==='"'){f+='"';i++}else if(c==='"')q=false;else f+=c}else{if(c==='"')q=true;else if(c===','){row.push(f);f=''}else if(c==='\n'){row.push(f.replace(/\r$/,''));rows.push(row);row=[];f=''}else f+=c}}if(f.length||row.length){row.push(f.replace(/\r$/,''));rows.push(row)}return rows}
+const txt=v=>v==null?'':String(v).trim();function missing(v){const s=txt(v).toLowerCase();return s===''||s==='-'||s==='—'||s==='–'||s==='nan'||s==='null'||s==='undefined'}
+function num(v){if(missing(v))return null;let s=txt(v).replace('%','').replace(/\s/g,'');if(s.includes(',')&&!s.includes('.'))s=s.replace(',','.');const n=Number(s);return Number.isFinite(n)?n:null}
+const esc=s=>String(s??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));const fmt=(n,d=1)=>n==null||!Number.isFinite(Number(n))?'—':Number(n).toFixed(d),pct=n=>n==null?'—':fmt(n,1)+'%',eur=n=>n==null?'—':fmt(n,2)+' €';
+function dateVal(s){if(!s)return 0;if(/^\d{4}-\d{2}-\d{2}$/.test(s))return Date.parse(s);const m=s.match(/^(\d{1,2})-(\d{1,2})(?:-(\d{4}))?$/);if(m)return Date.parse(`${m[3]||2026}-${m[2].padStart(2,'0')}-${m[1].padStart(2,'0')}`);return Date.parse(s)||0}
+function norm(s){return txt(s).normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().replace(/[^a-z0-9]+/g,' ').trim()}
+function oddBand(v){if(v==null)return'Sem odd';if(v<1.5)return'1.00–1.49';if(v<2)return'1.50–1.99';if(v<3)return'2.00–2.99';if(v<4)return'3.00–3.99';return'4.00+'}
+function classGroup(r){if(!missing(r.Classe))return txt(r.Classe);const n=txt(r.NIVEL),G={'Compressão':['AAA','AAB','ABA','BAA','AAC','ACA','CAA'],'Consenso':['BBB','BBA','BAB','ABB','BBC','BCB','CBB'],'Divergência':['ABC','ACB','BAC','BCA','CAB','CBA'],'Extremo':['CCB','CBC','BCC'],'Extremo+':['CCC','CCA','CAC','ACC']};for(const[g,a]of Object.entries(G))if(a.includes(n))return g;return'Outras'}
+function mean(a){const v=a.filter(x=>x!=null);return v.length?v.reduce((p,q)=>p+q,0)/v.length:null}function sd(a){const v=a.filter(x=>x!=null),m=mean(v);return v.length?Math.sqrt(v.reduce((s,x)=>s+(x-m)*(x-m),0)/v.length):null}
+function sportFromCategory(c){return txt(c).split('|')[0].trim()}function canonicalFromCategory(c){const a=txt(c).split('|').map(x=>x.trim());return a[a.length-1]||''}
+
+function buildResults(csv){const rows=parseCSV(csv);if(rows.length<4)throw Error('Resultados inválido');const hdr=rows[2].map(txt),names=hdr.map((h,i)=>h||(i===23?'Comp_Full':i===24?'Pais':`col${i}`)),out=[];for(let i=3;i<rows.length;i++){if(!rows[i].some(x=>!missing(x)))continue;const o={};names.forEach((n,j)=>o[n]=rows[i][j]??'');['Betano','Betclic','Bwin','Odd_Entrada','P&L flat','Odd_Contraria','cont x','cont 1ou2','cont 1xoux2','Stake Real','P&L Real','Stake Flat','Delta_vs_Média_GANHO_%','Delta_vs_Min_GANHO_%','Delta_vs_2aMax_GANHO_%'].forEach(c=>o[c]=num(o[c]));o.Comp_Full=txt(o.Comp_Full)||txt(o.col23);o._band=oddBand(o.Odd_Entrada);o._group=classGroup(o);o._stake=o['Stake Flat']>0?o['Stake Flat']:.5;out.push(o)}return out}
+function buildMargins(csv){
+ const rows=parseCSV(csv);
+ const normHeader=s=>txt(s).normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().replace(/\s+/g,' ').trim();
+ let hi=rows.findIndex(r=>r.some(x=>['categoria','desporto; competicao','desporto; competição'].includes(normHeader(x))));
+ if(hi<0)throw Error('Não encontrei a coluna Categoria / Desporto; Competição');
+ const h=rows[hi].map(txt);
+ const catCol=h.find(x=>['categoria','desporto; competicao','desporto; competição'].includes(normHeader(x)))||'Categoria';
+ const by={};
+ for(let i=hi+1;i<rows.length;i++){
+   const o={};h.forEach((n,j)=>o[n]=rows[i][j]??'');
+   const cat=txt(o[catCol]);
+   if(!cat)continue;
+   ['Betano','Betclic','Bwin','Média','MIN','MAX'].forEach(c=>o[c]=num(o[c]));
+   (by[cat]??=[]).push(o)
+ }
+ const p={};
+ for(const[cat,a]of Object.entries(by)){
+   const B=mean(a.map(x=>x.Betano)),C=mean(a.map(x=>x.Betclic)),W=mean(a.map(x=>x.Bwin)),vals=[B,C,W].filter(x=>x!=null);
+   p[cat]={category:cat,canonical:canonicalFromCategory(cat),sport:sportFromCategory(cat),n:a.length,
+     Betano:B,Betclic:C,Bwin:W,mean:mean(vals),sd:sd(vals),
+     range:vals.length?Math.max(...vals)-Math.min(...vals):null,
+     dBC:B!=null&&C!=null?B-C:null,dBW:B!=null&&W!=null?B-W:null,dCW:C!=null&&W!=null?C-W:null}
+ }
+ return p
+}
+const FEATURES=['Betano','Betclic','Bwin','mean','sd','range','dBC','dBW','dCW'],WEIGHTS={Betano:1,Betclic:1,Bwin:1,mean:.3,sd:1.5,range:1.5,dBC:1.25,dBW:1.25,dCW:1.25};
+function zstats(profiles,sport){const ps=Object.values(profiles).filter(p=>p.sport===sport),z={};for(const f of FEATURES){const v=ps.map(p=>p[f]).filter(x=>x!=null);z[f]={m:mean(v),s:sd(v)||1}}return z}
+function mdist(a,b,z){
+ if(!a||!b||a.sport!==b.sport)return Infinity;
+ const highMean=((a.mean||0)+(b.mean||0))/2;
+ const relaxDisp = highMean>=13 ? .55 : highMean>=11 ? .72 : highMean>=9.5 ? .88 : 1;
+ let S=0,W=0;
+ for(const f of FEATURES){
+   if(a[f]==null||b[f]==null)continue;
+   const d=(a[f]-b[f])/(z[f]?.s||1);
+   let w=WEIGHTS[f];
+   if(['sd','range','dBC','dBW','dCW'].includes(f)) w*=relaxDisp;
+   S+=w*d*d;W+=w;
+ }
+ return W?Math.sqrt(S/W):Infinity
+}
+function structuralIndex(p){return (p.mean||0) + .35*(p.sd||0);}
+function structuralGroup(p){
+  const b=p.Betano??999, c=p.Betclic??999, w=p.Bwin??999;
+  if(w>=15 && (b>=9.5 || c>=9.5)){return {key:'G4',label:'G4 — Mercado muito disperso'};}
+  if(b>=9.5 || c>=9.5){return {key:'G2',label:'G2 — Mercado menos eficiente'};}
+  if(w>=13.5){return {key:'G3',label:'G3 — Bwin alta / assimétrico'};}
+  return {key:'G1',label:'G1 — Mercado eficiente'};
+}
+function clusterMargins(profiles,sport){
+  const ps=Object.values(profiles).filter(p=>p.sport===sport);
+  if(!ps.length)return[];
+  const defs=[
+    {key:'G1',label:'G1 — Mercado eficiente'},
+    {key:'G2',label:'G2 — Mercado menos eficiente'},
+    {key:'G3',label:'G3 — Bwin alta / assimétrico'},
+    {key:'G4',label:'G4 — Mercado muito disperso'}
+  ];
+  const groups=defs.map(d=>({id:`${sport[0]}-${d.key}`,label:d.label,sport,members:[]}));
+  for(const p of ps){const g=structuralGroup(p);const target=groups.find(x=>x.id===`${sport[0]}-${g.key}`);if(target) target.members.push(p);}
+  for(const g of groups){g.members.sort((a,b)=>structuralIndex(a)-structuralIndex(b));g.centroidMean=mean(g.members.map(x=>x.mean));g.centroidSd=mean(g.members.map(x=>x.sd));g.centroidRange=mean(g.members.map(x=>x.range));}
+  return groups.filter(g=>g.members.length);
+}
+function exactMarginCategory(comp,sport,profiles){
+ const n=norm(comp),cands=Object.values(profiles).filter(p=>p.sport===sport);
+ for(const p of cands)if(norm(p.canonical)===n)return p.category;
+ if(sport==='Ténis'){
+   const isQ=/\bq\b|quali|qualifica/i.test(comp);
+   if(/^ATP\b/i.test(comp)){const p=cands.find(x=>isQ ? norm(x.canonical)==='atp q' : norm(x.canonical)==='atp');if(p)return p.category;}
+   if(/^WTA\b/i.test(comp)){const p=cands.find(x=>isQ ? norm(x.canonical)==='wta q' : norm(x.canonical)==='wta');if(p)return p.category;}
+ }
+ return null
+}
+function perf(rows,pnl='P&L flat',stake='_stake',prior=5){let vol=0,pl=0,n=0;for(const r of rows){if(r[pnl]==null)continue;const st=stake==='_stake'?r._stake:(r[stake]||0);vol+=st;pl+=r[pnl]||0;n++}return{n,vol,pnl:pl,roi:vol?pl/vol:null,shrunk:vol?pl/(vol+prior):0,conf:Math.min(1,vol/10)}}
+function distribution(rows,levels){const counts=Object.fromEntries(levels.map(x=>[x,1]));let n=levels.length;for(const r of rows){const l=txt(r.NIVEL);if(l in counts){counts[l]++;n++}}return levels.map(x=>counts[x]/n)}
+function jsd(a,b){const m=a.map((x,i)=>(x+b[i])/2);function kl(p,q){let s=0;for(let i=0;i<p.length;i++)if(p[i]>0&&q[i]>0)s+=p[i]*Math.log(p[i]/q[i]);return s}return Math.sqrt((kl(a,m)+kl(b,m))/2)}
+function assignZonas(data,closed,profiles,clusters){
+ const map={},assign={};
+ clusters.forEach(c=>c.members.forEach(p=>map[p.category]=c.id));
+ const comps=[...new Set(data.map(r=>txt(r.Competição)).filter(Boolean))];
+ for(const comp of comps){
+   const rows=data.filter(r=>txt(r.Competição)===comp),sport=txt(rows[0]?.Desporto);
+   const cat=exactMarginCategory(comp,sport,profiles);
+   if(cat){
+     const p=profiles[cat];
+     assign[comp]={cluster:map[cat],source:'real',confidence:1,via:p.canonical,category:cat,
+       Betano:p.Betano,Betclic:p.Betclic,Bwin:p.Bwin,mean:p.mean,sd:p.sd,range:p.range,
+       structuralIndex:structuralIndex(p)};
+   }else{
+     const other=sport==='Futebol'?'F-Outras':sport==='Ténis'?'T-Outras':sport==='Basque
